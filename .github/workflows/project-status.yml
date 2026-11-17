@@ -1,0 +1,40 @@
+name: Project status
+
+on:
+  issues:
+    types: [assigned]
+
+permissions: {}
+
+env:
+  PROJECT: PVT_kwDOFSnon84Br3CE
+  STATUS_FIELD: PVTSSF_lADOFSnon84Br3CEzhqHvAQ
+  IN_PROGRESS: 47fc9ee4
+
+jobs:
+  in-progress:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ISSUE: ${{ github.event.issue.node_id }}
+        run: |
+          out=$(gh api graphql -f id="$ISSUE" -f query='
+            query($id: ID!) {
+              node(id: $id) {
+                ... on Issue {
+                  projectItems(first: 20) {
+                    nodes {
+                      id
+                      project { id }
+                      status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+                    }
+                  }
+                }
+              }
+            }' --jq '.data.node.projectItems.nodes[] | select(.project.id == env.PROJECT) | "\(.id) \(.status.name // "Todo")"')
+          read -r item status <<< "$out"
+          [ -n "$item" ] || { echo "::error::Issue not in project"; exit 1; }
+          # Forward only: an assignee added later must not pull the card back.
+          [ "$status" = Todo ] || exit 0
+          gh project item-edit --project-id "$PROJECT" --id "$item" --field-id "$STATUS_FIELD" --single-select-option-id "$IN_PROGRESS"
