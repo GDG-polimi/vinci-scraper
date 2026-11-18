@@ -1,11 +1,14 @@
 import asyncio
 from collections import Counter
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 from itertools import pairwise
 
 import httpx
+import pytest
 
 from vinci_scraper.config import Config
-from vinci_scraper.fetch import Fetcher
+from vinci_scraper.fetch import BACKOFF, MAX_ATTEMPTS, Fetcher
 
 CONFIG = Config.model_validate(
     {
@@ -27,6 +30,83 @@ def run(handler, *urls, interval=0.0, **kwargs):
             return await asyncio.gather(*(fetcher.fetch(url) for url in urls))
 
     return asyncio.run(main())
+
+
+def replay(*answers):
+    """A handler answering with `answers` in order: status codes, responses or exceptions."""
+    answers = list(answers)
+
+    def handler(request):
+        handler.requests.append(request)
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return httpx.Response(answer) if isinstance(answer, int) else answer
+
+    handler.requests = []
+    return handler
+
+
+@pytest.fixture
+def sleeps(monkeypatch):
+    """Record the waits instead of sleeping, so retry tests take no time."""
+    waits = []
+
+    async def fake_sleep(seconds):
+        waits.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    return waits
+
+
+def test_5xx_is_retried_after_backoff(sleeps):
+    handler = replay(503, 200)
+    (response,) = run(handler, URL)
+    assert response.status_code == 200
+    assert len(handler.requests) == 2
+    assert BACKOFF <= sleeps[0] < BACKOFF + 1  # base delay + jitter
+
+
+def test_gives_up_after_max_attempts_with_exponential_backoff(sleeps):
+    handler = replay(*[500] * MAX_ATTEMPTS)
+    (response,) = run(handler, URL)
+    assert response.status_code == 500
+    assert len(handler.requests) == MAX_ATTEMPTS
+    assert [int(s) for s in sleeps] == [2, 4, 8]
+
+
+@pytest.mark.parametrize("status", [200, 403, 404])
+def test_other_statuses_are_not_retried(sleeps, status):
+    handler = replay(status)
+    (response,) = run(handler, URL)
+    assert response.status_code == status
+    assert len(handler.requests) == 1
+
+
+def test_transport_errors_are_retried_then_raised(sleeps):
+    handler = replay(*[httpx.ConnectTimeout("timed out")] * MAX_ATTEMPTS)
+    with pytest.raises(httpx.ConnectTimeout):
+        run(handler, URL)
+    assert len(handler.requests) == MAX_ATTEMPTS
+
+
+@pytest.mark.parametrize("as_date", [False, True], ids=["seconds", "http-date"])
+def test_retry_after_is_honored(sleeps, as_date):
+    later = datetime.now(UTC) + timedelta(seconds=8)
+    value = format_datetime(later, usegmt=True) if as_date else "7"
+    handler = replay(httpx.Response(429, headers={"Retry-After": value}), 200)
+    (response,) = run(handler, URL)
+    assert response.status_code == 200
+    assert len(sleeps) == 1  # the host's turn is pushed back: no backoff on top
+    assert 6 < sleeps[0] <= 8
+
+
+def test_too_long_retry_after_gives_up(sleeps):
+    handler = replay(httpx.Response(503, headers={"Retry-After": "300"}))
+    (response,) = run(handler, URL)
+    assert response.status_code == 503
+    assert len(handler.requests) == 1
+    assert sleeps == []
 
 
 def test_per_host_concurrency_limit_with_hosts_in_parallel():
