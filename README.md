@@ -69,6 +69,13 @@ uv run vinci config check                                     # validate the fil
 uv run vinci config check https://www.polimi.it/studenti/esami  # is this URL in scope?
 ```
 
+### Contact in the User-Agent
+
+Every request is sent as `VINCI-bot/<version> (+https://github.com/GDG-polimi/vinci-scraper; <contact>)`,
+so Polimi can reach us instead of blocking us. The crawler refuses to build an HTTP client until a
+contact is set, either in `crawler.contact` in `config/hosts.yaml` or in the `VINCI_CONTACT`
+environment variable (the env var wins).
+
 ### Local database
 
 Crawl state lives in a SQLite file (default `data/vinci.sqlite`, git-ignored). Create or upgrade it with:
@@ -88,6 +95,7 @@ Tables: `documents` (one row per page and language; IT and EN share a `doc_group
 config/hosts.yaml    per-host crawl config (allowlist, prefixes, frequency, selectors)
 src/vinci_scraper/   the package; `vinci` CLI entry point in cli.py
   config.py          loads + validates hosts.yaml; Config.is_allowed(url)
+  client.py          make_client(): httpx client with the identifying User-Agent
   db/                SQLite connection + numbered SQL migrations
 tests/               pytest tests (no network access)
 .github/workflows/   CI (lint + tests on every PR) and project-board automation

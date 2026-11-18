@@ -14,6 +14,11 @@
 #                     The longest matching prefix decides the frequency.
 #   deny              path prefixes never crawled, even inside an allowed prefix
 
+crawler:
+  # Contact shown in the User-Agent (an email or URL Polimi can use to reach us).
+  # Set it here or via the VINCI_CONTACT env var; nothing is fetched while it is CHANGE_ME.
+  contact: CHANGE_ME
+
 hosts:
   www.polimi.it:
     sitemaps: [https://www.polimi.it/sitemap.xml]

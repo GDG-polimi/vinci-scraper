@@ -12,6 +12,7 @@ import yaml
 from pydantic import ValidationError
 
 from vinci_scraper import __version__, db
+from vinci_scraper.client import MissingContactError, resolve_contact, user_agent
 from vinci_scraper.config import DEFAULT_CONFIG, load_config
 
 DEFAULT_DB = "data/vinci.sqlite"
@@ -23,6 +24,10 @@ def cmd_config_check(args: argparse.Namespace) -> int:
     except (OSError, yaml.YAMLError, ValidationError) as exc:
         print(f"invalid config {args.config}:\n{exc}")
         return 1
+    try:
+        print(f"user-agent: {user_agent(resolve_contact(config))}")
+    except MissingContactError as exc:
+        print(f"warning: {exc}")
     for name, host in config.hosts.items():
         state = "enabled" if host.enabled else "disabled"
         print(f"{name}: {state}, {len(host.allow)} allowed / {len(host.deny)} denied prefixes")
