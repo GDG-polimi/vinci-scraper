@@ -57,10 +57,24 @@ uv run ruff check .
 uv run ruff format .
 ```
 
+### Local database
+
+Crawl state lives in a SQLite file (default `data/vinci.sqlite`, git-ignored). Create or upgrade it with:
+
+```bash
+uv run vinci db migrate            # or --db path/to/file.sqlite
+```
+
+Tables: `documents` (one row per page and language; IT and EN share a `doc_group`), `versions`
+(content history, one `is_current` row per document), `attachments` (files linked from a page) and
+`fetch_log` (every HTTP request). To change the schema, add a new
+`src/vinci_scraper/db/migrations/NNNN_*.sql` file. Never edit one that is already merged.
+
 ## Project layout
 
 ```
 src/vinci_scraper/   the package; `vinci` CLI entry point in cli.py
+  db/                SQLite connection + numbered SQL migrations
 tests/               pytest tests (no network access)
 .github/workflows/   CI (lint + tests on every PR) and project-board automation
 ```
