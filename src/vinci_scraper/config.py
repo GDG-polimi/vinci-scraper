@@ -62,7 +62,14 @@ class HostConfig(_Model):
         return max(candidates, key=lambda p: len(p.path), default=None)
 
 
+class CrawlerConfig(_Model):
+    # Shown in the User-Agent so Polimi can reach us instead of blocking us (SCR-03).
+    # Can be overridden with the VINCI_CONTACT environment variable.
+    contact: str = "CHANGE_ME"
+
+
 class Config(_Model):
+    crawler: CrawlerConfig = CrawlerConfig()
     hosts: dict[str, HostConfig] = Field(min_length=1)
 
     @field_validator("hosts")
