@@ -69,7 +69,7 @@ tests/               pytest tests (no network access)
 
 We work with **one issue → one branch → one pull request**. Nobody pushes to `main` directly.
 
-In short: **assign yourself → branch → commit → PR with `Closes #N` → review → merge.**
+In short: **assign yourself → branch → commit → PR with `Closes #N` → merge (by a maintainer).**
 
 ### 1. Pick an issue
 
@@ -131,10 +131,11 @@ gh pr create --fill   # or open it from the GitHub UI
 
 ### 5. Review and merge
 
-- At least **one approval** from another team member is needed before merging.
-- CI (lint, format check, tests) must be green.
+- **Maintainers** (`r4gor`, `Keevin16`) can merge their own PRs once CI is green.
+- **Everyone else:** a maintainer reviews your PR and merges it. Don't merge it yourself.
+- CI (lint, format check, tests) must be green before any merge.
 - Address review comments with new commits; don't force-push over a review in progress.
-- Whoever opened the PR merges it after approval, then deletes the branch.
+- Delete the branch after merging.
 
 ### Stacked PRs
 
