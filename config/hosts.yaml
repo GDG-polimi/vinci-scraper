@@ -1,0 +1,77 @@
+# Per-host crawl configuration. Loaded and validated by vinci_scraper.config.
+#
+# The keys under `hosts` are the global allowlist: the crawler never follows a
+# link to a host that is not listed here, nor to a disabled one.
+#
+# Per host:
+#   enabled           false = do not crawl (e.g. waiting for permission)
+#   render            http (plain fetch) | browser (Playwright, JS-heavy sites)
+#   sitemaps          seed sitemaps (SCR-09)
+#   content_selector  CSS selector for the main content, fallback for trafilatura (SCR-18)
+#   frequency         default re-crawl frequency: daily | weekly | monthly
+#   allow             path prefixes in scope. A prefix matches itself and everything
+#                     below it (/studenti matches /studenti/esami, not /studenti-x).
+#                     The longest matching prefix decides the frequency.
+#   deny              path prefixes never crawled, even inside an allowed prefix
+
+crawler:
+  # Contact shown in the User-Agent (an email or URL Polimi can use to reach us).
+  # Set it here or via the VINCI_CONTACT env var; nothing is fetched while it is CHANGE_ME.
+  contact: CHANGE_ME
+
+hosts:
+  www.polimi.it:
+    sitemaps: [https://www.polimi.it/sitemap.xml]
+    content_selector: main#page-content
+    frequency: monthly
+    allow:
+      # 1.1 DSU, fees, scholarships
+      - { path: /studenti/tasse-borse-e-agevolazioni, frequency: weekly }
+      - { path: /futuri-studenti/costi-e-borse-di-studio, frequency: weekly }
+      - { path: /sviluppo-sostenibile/diritto-allo-studio, frequency: weekly }
+      # 1.2 Calls, notices, deadlines (listing pages)
+      - { path: /campus-e-servizi/mobilita-internazionale/studiare-allestero, frequency: daily }
+      - { path: /campus-e-servizi/biblioteche-e-archivi/biblioteche/news, frequency: daily }
+      - { path: /campus-e-servizi/sport-e-tempo-libero/competizioni-internazionali, frequency: daily }
+      # 1.3 Student services (also covers 1.5 regulations and forms under /studenti)
+      - path: /studenti
+      - path: /campus-e-servizi
+      # 1.4 Opportunities: associations, teams, volunteering
+      - path: /sviluppo-sostenibile/innovazione-e-responsabilita-sociale
+      # Attachments linked from in-scope pages (SCR-12)
+      - path: /fileadmin
+    # English twins (/en/...) are reached through hreflang, not by prefix (SCR-39).
+    deny:
+      - /typo3        # blocked by robots.txt
+      - /ricerca
+      - /il-politecnico
+      - /docenti-e-ricercatori
+      - /staff
+      - /lavora-con-noi
+      - /dottorato
+      - /imprese
+      - /sostieni-polimi
+      - /stampa
+
+  www.residenze.polimi.it:
+    frequency: monthly
+    allow:
+      - path: /
+
+  www.sport.polimi.it:
+    frequency: monthly
+    allow:
+      - path: /
+
+  www.careerservice.polimi.it:
+    enabled: false    # pending permission
+    render: browser   # Next.js, client-rendered
+    frequency: daily
+    allow:
+      - path: /
+
+  www.normativa.polimi.it:
+    enabled: false    # pending permission
+    frequency: monthly
+    allow:
+      - path: /
