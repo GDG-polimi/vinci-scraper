@@ -69,13 +69,18 @@ tests/               pytest tests (no network access)
 
 We work with **one issue → one branch → one pull request**. Nobody pushes to `main` directly.
 
+In short: **assign yourself → branch → commit → PR with `Closes #N` → review → merge.**
+
 ### 1. Pick an issue
 
 1. Open the project board and pick a card in **Todo**. Work milestone by milestone
    (`S0 Setup` → `S1 Fetch` → `S2 Discovery` → ...). Issues labelled `facoltativo` are optional
    and can wait.
-2. **Assign yourself** to the issue. The `Project status` workflow then moves the card to
-   **In Progress** automatically. It only moves forward, so adding a second assignee later never
+2. **Assign the issue to yourself before you start working on it**, before you even create the
+   branch. This is a rule, not a suggestion: it's how the team knows who is doing what and avoids
+   two people working on the same issue. Don't pick up an issue someone else is assigned to; ask
+   them in a comment first. Assigning moves the card to **In Progress** automatically (the
+   `Project status` workflow). It only moves forward, so adding a second assignee later never
    pushes the card back.
 3. If the issue is unclear or too large, ask in a comment on the issue *before* writing code.
    If you find new work along the way, open a new issue instead of growing your PR.
