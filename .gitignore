@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Crawl output (database, raw snapshots, logs) never goes in git
+data/
+*.sqlite
+*.sqlite3
+*.db
+
+# Local settings
+.env
+.DS_Store
+.idea/
+.vscode/
