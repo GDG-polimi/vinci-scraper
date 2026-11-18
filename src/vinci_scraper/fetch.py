@@ -1,4 +1,4 @@
-"""Async fetcher with per-host politeness limits and retries.
+"""Async fetcher with per-host politeness limits, retries and allowlist-checked redirects.
 
 Every HTTP request of the crawler goes through `Fetcher.fetch()`. Per host, at most
 CONCURRENCY_PER_HOST requests are in flight and request starts are at least INTERVAL
@@ -7,6 +7,9 @@ asyncio.TaskGroup) to crawl several hosts in parallel.
 
 Timeouts, network errors, 429 and 5xx are retried with exponential backoff, or after the
 delay the server asks for in Retry-After. Other responses (404 included) are never retried.
+
+Redirects are followed by hand: every hop is checked against the allowlist and waits for
+its host's turn like any other request.
 """
 
 import asyncio
@@ -27,6 +30,11 @@ INTERVAL = 1.0  # seconds between request starts on the same host
 MAX_ATTEMPTS = 4
 BACKOFF = 2.0  # seconds before the first retry, doubled at each further one
 MAX_RETRY_AFTER = 120.0  # a longer Retry-After gives up instead of stalling the run
+MAX_REDIRECTS = 5
+
+
+class DisallowedURLError(ValueError):
+    """The URL, or a redirect target, is outside the host allowlist (config/hosts.yaml)."""
 
 
 def _retryable(status: int) -> bool:
@@ -100,10 +108,25 @@ class Fetcher:
         await self._client.aclose()
 
     async def fetch(self, url: str) -> httpx.Response:
-        """GET `url`. Returns the last response, whatever its status, once retries are over.
+        """GET `url`, following redirects inside the allowlist.
 
-        Raises the last attempt's httpx.TransportError if the host stays unreachable.
+        Returns the last response, whatever its status, once retries are over. Raises
+        DisallowedURLError for a URL or redirect outside the allowlist, httpx.TooManyRedirects,
+        or the last attempt's httpx.TransportError if the host stays unreachable.
         """
+        for _ in range(MAX_REDIRECTS + 1):
+            if not self.config.is_allowed(url):
+                raise DisallowedURLError(url)
+            response = await self._get(url)
+            if not response.has_redirect_location:
+                return response
+            url = str(response.next_request.url)  # absolute, even for a relative Location
+        raise httpx.TooManyRedirects(
+            f"more than {MAX_REDIRECTS} redirects", request=response.request
+        )
+
+    async def _get(self, url: str) -> httpx.Response:
+        """One request, retried on timeouts, network errors, 429 and 5xx."""
         gate = self._gates[urlsplit(url).hostname]
         for attempt in range(1, MAX_ATTEMPTS + 1):
             last = attempt == MAX_ATTEMPTS
@@ -128,4 +151,4 @@ class Fetcher:
 
     async def _send(self, url: str) -> httpx.Response:
         """The single place where a request leaves the crawler (hook for SCR-06 and SCR-07)."""
-        return await self._client.get(url)
+        return await self._client.get(url, follow_redirects=False)

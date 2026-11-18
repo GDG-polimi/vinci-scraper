@@ -7,15 +7,17 @@ from itertools import pairwise
 import httpx
 import pytest
 
+from vinci_scraper.client import make_client
 from vinci_scraper.config import Config
-from vinci_scraper.fetch import BACKOFF, MAX_ATTEMPTS, Fetcher
+from vinci_scraper.fetch import BACKOFF, MAX_ATTEMPTS, MAX_REDIRECTS, DisallowedURLError, Fetcher
 
 CONFIG = Config.model_validate(
     {
+        "crawler": {"contact": "vinci@example.org"},
         "hosts": {
             "www.polimi.it": {"allow": [{"path": "/"}]},
             "www.sport.polimi.it": {"allow": [{"path": "/"}]},
-        }
+        },
     }
 )
 URL = "https://www.polimi.it/studenti"
@@ -25,7 +27,8 @@ def run(handler, *urls, interval=0.0, **kwargs):
     """Fetch `urls` concurrently through a mock transport and return the responses."""
 
     async def main():
-        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        # The production client (it follows redirects by default), on a mock transport.
+        client = make_client(CONFIG, transport=httpx.MockTransport(handler))
         async with Fetcher(CONFIG, client, interval=interval, **kwargs) as fetcher:
             return await asyncio.gather(*(fetcher.fetch(url) for url in urls))
 
@@ -137,3 +140,37 @@ def test_request_starts_are_spaced_per_host():
     gaps = [b - a for a, b in pairwise(starts)]
     assert len(gaps) == 3
     assert all(gap >= 0.045 for gap in gaps)  # small margin for timer resolution
+
+
+def test_redirects_are_followed_inside_the_allowlist():
+    def handler(request):
+        if request.url.path == "/old":
+            return httpx.Response(301, headers={"Location": "/new"})
+        return httpx.Response(200)
+
+    (response,) = run(handler, "https://www.polimi.it/old")
+    assert response.status_code == 200
+    assert response.url == "https://www.polimi.it/new"
+
+
+def test_redirect_outside_the_allowlist_is_never_requested():
+    target = "https://www.careerservice.polimi.it/jobs"
+    handler = replay(httpx.Response(302, headers={"Location": target}))
+    with pytest.raises(DisallowedURLError):
+        run(handler, URL)
+    assert [str(request.url) for request in handler.requests] == [URL]
+
+
+def test_disallowed_url_is_never_requested():
+    handler = replay()
+    with pytest.raises(DisallowedURLError):
+        run(handler, "https://example.org/")
+    assert handler.requests == []
+
+
+def test_redirect_loop_stops():
+    loop = httpx.Response(302, headers={"Location": "/loop"})
+    handler = replay(*[loop] * (MAX_REDIRECTS + 1))
+    with pytest.raises(httpx.TooManyRedirects):
+        run(handler, URL)
+    assert len(handler.requests) == MAX_REDIRECTS + 1
