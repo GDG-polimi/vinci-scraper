@@ -8,9 +8,30 @@ import argparse
 from collections.abc import Sequence
 from contextlib import closing
 
+import yaml
+from pydantic import ValidationError
+
 from vinci_scraper import __version__, db
+from vinci_scraper.config import DEFAULT_CONFIG, load_config
 
 DEFAULT_DB = "data/vinci.sqlite"
+
+
+def cmd_config_check(args: argparse.Namespace) -> int:
+    try:
+        config = load_config(args.config)
+    except (OSError, yaml.YAMLError, ValidationError) as exc:
+        print(f"invalid config {args.config}:\n{exc}")
+        return 1
+    for name, host in config.hosts.items():
+        state = "enabled" if host.enabled else "disabled"
+        print(f"{name}: {state}, {len(host.allow)} allowed / {len(host.deny)} denied prefixes")
+    for url in args.urls:
+        frequency = config.frequency_for(url)
+        print(
+            f"{'ALLOW' if frequency else 'DENY '} {url}" + (f" ({frequency})" if frequency else "")
+        )
+    return 0
 
 
 def cmd_db_migrate(args: argparse.Namespace) -> int:
@@ -34,6 +55,19 @@ def build_parser() -> argparse.ArgumentParser:
     migrate = db_commands.add_parser("migrate", help="create or upgrade the schema")
     migrate.add_argument("--db", default=DEFAULT_DB, help=f"database path (default: {DEFAULT_DB})")
     migrate.set_defaults(handler=cmd_db_migrate)
+
+    config_parser = commands.add_parser("config", help="inspect the host configuration")
+    config_commands = config_parser.add_subparsers(
+        dest="config_command", metavar="COMMAND", required=True
+    )
+    check = config_commands.add_parser(
+        "check", help="validate the config; optionally test whether URLs are allowed"
+    )
+    check.add_argument("urls", nargs="*", metavar="URL", help="URLs to test against the allowlist")
+    check.add_argument(
+        "--config", default=DEFAULT_CONFIG, help=f"config path (default: {DEFAULT_CONFIG})"
+    )
+    check.set_defaults(handler=cmd_config_check)
 
     return parser
 

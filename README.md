@@ -35,7 +35,7 @@ sitemap.xml + listing pages ──► fetch (polite, per-host limits) ──► 
 | 2 | school and department sites, academic calendar, FAQs, office contacts, alumni, admissions | later |
 | 3 | research, staff, PhD, corporate, press, anything behind login, personal profiles | skipped |
 
-Allowed hosts and path prefixes live in the host config, not in code.
+Allowed hosts and path prefixes live in [`config/hosts.yaml`](config/hosts.yaml), not in code.
 
 ## Getting started
 
@@ -57,6 +57,18 @@ uv run ruff check .
 uv run ruff format .
 ```
 
+### Host configuration
+
+What gets crawled is decided by [`config/hosts.yaml`](config/hosts.yaml), not by code. Each host
+has a block with its allowed and denied path prefixes, re-crawl frequency, content selector,
+sitemaps, and whether it needs a browser. The listed hosts are the global allowlist: a link to
+any other host, or to a disabled one (e.g. pending permission), is never followed.
+
+```bash
+uv run vinci config check                                     # validate the file
+uv run vinci config check https://www.polimi.it/studenti/esami  # is this URL in scope?
+```
+
 ### Local database
 
 Crawl state lives in a SQLite file (default `data/vinci.sqlite`, git-ignored). Create or upgrade it with:
@@ -73,7 +85,9 @@ Tables: `documents` (one row per page and language; IT and EN share a `doc_group
 ## Project layout
 
 ```
+config/hosts.yaml    per-host crawl config (allowlist, prefixes, frequency, selectors)
 src/vinci_scraper/   the package; `vinci` CLI entry point in cli.py
+  config.py          loads + validates hosts.yaml; Config.is_allowed(url)
   db/                SQLite connection + numbered SQL migrations
 tests/               pytest tests (no network access)
 .github/workflows/   CI (lint + tests on every PR) and project-board automation
