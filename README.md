@@ -96,7 +96,8 @@ config/hosts.yaml    per-host crawl config (allowlist, prefixes, frequency, sele
 src/vinci_scraper/   the package; `vinci` CLI entry point in cli.py
   config.py          loads + validates hosts.yaml; Config.is_allowed(url)
   client.py          make_client(): httpx client with the identifying User-Agent
-  fetch.py           Fetcher: per-host limits, retries, redirects checked against the allowlist
+  fetch.py           Fetcher: per-host limits, retries, redirects checked against the allowlist,
+                     one fetch_log row per request
   db/                SQLite connection + numbered SQL migrations
 tests/               pytest tests (no network access)
 .github/workflows/   CI (lint + tests on every PR) and project-board automation

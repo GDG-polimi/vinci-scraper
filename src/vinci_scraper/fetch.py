@@ -10,10 +10,17 @@ delay the server asks for in Retry-After. Other responses (404 included) are nev
 
 Redirects are followed by hand: every hop is checked against the allowlist and waits for
 its host's turn like any other request.
+
+Given a database (`log_db`), every request is logged to fetch_log, one row per attempt:
+retries, redirect hops and failed requests included (SCR-07).
 """
 
 import asyncio
+import hashlib
 import random
+import sqlite3
+import time
+import uuid
 from collections import defaultdict
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -55,6 +62,11 @@ def _retry_after(response: httpx.Response) -> float | None:
     return max(0.0, (when - datetime.now(UTC)).total_seconds())
 
 
+def _utc_now() -> str:
+    """The current time in the database's timestamp format, e.g. '2026-11-18T09:30:00Z'."""
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 class _HostGate:
     """Politeness state of one host: in-flight slots and the earliest next start.
 
@@ -81,7 +93,11 @@ class _HostGate:
 
 
 class Fetcher:
-    """Polite HTTP fetcher. It owns its client: `async with Fetcher(config) as f: ...`."""
+    """Polite HTTP fetcher. It owns its client: `async with Fetcher(config) as f: ...`.
+
+    Pass `log_db` (a connection with the schema applied) to log every request to fetch_log.
+    The rows carry `run_id`, a fresh random id unless you give one.
+    """
 
     def __init__(
         self,
@@ -91,6 +107,8 @@ class Fetcher:
         concurrency: int = CONCURRENCY_PER_HOST,
         interval: float = INTERVAL,
         backoff: float = BACKOFF,
+        log_db: sqlite3.Connection | None = None,
+        run_id: str | None = None,
     ):
         self.config = config
         # One client for the whole run: connections are reused, and the per-host
@@ -100,6 +118,9 @@ class Fetcher:
         self._gates: defaultdict[str, _HostGate] = defaultdict(
             lambda: _HostGate(concurrency, interval)
         )
+        # With a database, every request is logged to fetch_log under this run_id (SCR-07).
+        self._log_db = log_db
+        self.run_id = run_id or uuid.uuid4().hex
 
     async def __aenter__(self) -> Self:
         return self
@@ -150,5 +171,57 @@ class Fetcher:
             await asyncio.sleep(self._backoff * 2 ** (attempt - 1) + random.random())
 
     async def _send(self, url: str) -> httpx.Response:
-        """The single place where a request leaves the crawler (hook for SCR-06 and SCR-07)."""
-        return await self._client.get(url, follow_redirects=False)
+        """The single place where a request leaves the crawler (hook for SCR-06 and SCR-07).
+
+        Every call is logged to fetch_log. A failed request is logged too, then its error is
+        re-raised unchanged, so the retry logic in `_get` sees exactly what it saw before.
+        """
+        fetched_at = _utc_now()
+        start = time.perf_counter()
+        try:
+            response = await self._client.get(url, follow_redirects=False)
+        except httpx.RequestError as exc:  # no usable response: timeout, DNS, bad gzip, ...
+            self._log(url, fetched_at, start, error=f"{type(exc).__name__}: {exc}")
+            raise
+        self._log(url, fetched_at, start, response=response)
+        return response
+
+    def _log(
+        self,
+        url: str,
+        fetched_at: str,
+        start: float,
+        *,
+        response: httpx.Response | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Add one fetch_log row for a request started at `start` (a perf_counter value)."""
+        if self._log_db is None:
+            return
+        elapsed_ms = round((time.perf_counter() - start) * 1000)
+        status = etag = last_modified = size = content_hash = None
+        if response is not None:
+            status = response.status_code
+            etag = response.headers.get("ETag")
+            # Kept verbatim, not converted to ISO: SCR-31 sends it back as If-Modified-Since.
+            last_modified = response.headers.get("Last-Modified")
+            size = len(response.content)  # the body after gzip/brotli decoding
+            content_hash = hashlib.sha256(response.content).hexdigest()
+        self._log_db.execute(
+            "INSERT INTO fetch_log (run_id, url, status, error, elapsed_ms, bytes, etag,"
+            " last_modified, content_hash, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                self.run_id,
+                url,
+                status,
+                error,
+                elapsed_ms,
+                size,
+                etag,
+                last_modified,
+                content_hash,
+                fetched_at,
+            ),
+        )
+        # Commit at once: if the run crashes, the log up to the crash is what we need.
+        self._log_db.commit()
