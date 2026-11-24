@@ -63,7 +63,7 @@ def _retry_after(response: httpx.Response) -> float | None:
 
 
 def _utc_now() -> str:
-    """The current time in the database's timestamp format, e.g. '2026-11-18T09:30:00Z'."""
+    """Current UTC time as an ISO-8601 string, e.g. '2026-11-18T09:30:00Z'."""
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -95,8 +95,7 @@ class _HostGate:
 class Fetcher:
     """Polite HTTP fetcher. It owns its client: `async with Fetcher(config) as f: ...`.
 
-    Pass `log_db` (a connection with the schema applied) to log every request to fetch_log.
-    The rows carry `run_id`, a fresh random id unless you give one.
+    With `log_db`, every request is logged to fetch_log under `run_id` (random if not given).
     """
 
     def __init__(
@@ -118,7 +117,6 @@ class Fetcher:
         self._gates: defaultdict[str, _HostGate] = defaultdict(
             lambda: _HostGate(concurrency, interval)
         )
-        # With a database, every request is logged to fetch_log under this run_id (SCR-07).
         self._log_db = log_db
         self.run_id = run_id or uuid.uuid4().hex
 
@@ -173,14 +171,13 @@ class Fetcher:
     async def _send(self, url: str) -> httpx.Response:
         """The single place where a request leaves the crawler (hook for SCR-06 and SCR-07).
 
-        Every call is logged to fetch_log. A failed request is logged too, then its error is
-        re-raised unchanged, so the retry logic in `_get` sees exactly what it saw before.
+        Logs the request to fetch_log. Errors are logged, then re-raised for `_get` to retry.
         """
         fetched_at = _utc_now()
         start = time.perf_counter()
         try:
             response = await self._client.get(url, follow_redirects=False)
-        except httpx.RequestError as exc:  # no usable response: timeout, DNS, bad gzip, ...
+        except httpx.RequestError as exc:
             self._log(url, fetched_at, start, error=f"{type(exc).__name__}: {exc}")
             raise
         self._log(url, fetched_at, start, response=response)
@@ -195,7 +192,7 @@ class Fetcher:
         response: httpx.Response | None = None,
         error: str | None = None,
     ) -> None:
-        """Add one fetch_log row for a request started at `start` (a perf_counter value)."""
+        """Add one fetch_log row for a request started at `start` (perf_counter)."""
         if self._log_db is None:
             return
         elapsed_ms = round((time.perf_counter() - start) * 1000)
@@ -203,9 +200,9 @@ class Fetcher:
         if response is not None:
             status = response.status_code
             etag = response.headers.get("ETag")
-            # Kept verbatim, not converted to ISO: SCR-31 sends it back as If-Modified-Since.
+            # verbatim: SCR-31 sends it back as If-Modified-Since
             last_modified = response.headers.get("Last-Modified")
-            size = len(response.content)  # the body after gzip/brotli decoding
+            size = len(response.content)  # decoded body, like the hash
             content_hash = hashlib.sha256(response.content).hexdigest()
         self._log_db.execute(
             "INSERT INTO fetch_log (run_id, url, status, error, elapsed_ms, bytes, etag,"
@@ -223,5 +220,5 @@ class Fetcher:
                 fetched_at,
             ),
         )
-        # Commit at once: if the run crashes, the log up to the crash is what we need.
+        # commit now: a crash must not lose the log
         self._log_db.commit()

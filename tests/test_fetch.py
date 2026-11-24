@@ -68,7 +68,7 @@ def sleeps(monkeypatch):
 
 @pytest.fixture
 def conn():
-    """An in-memory database with the schema applied, for the fetch_log tests."""
+    """In-memory database with the schema applied."""
     conn = db.connect(":memory:")
     db.migrate(conn)
     yield conn
@@ -76,7 +76,6 @@ def conn():
 
 
 def logged(conn):
-    """The fetch_log rows, oldest first."""
     return conn.execute("SELECT * FROM fetch_log ORDER BY id").fetchall()
 
 
@@ -208,14 +207,12 @@ def test_success_is_logged_with_every_field(conn):
     assert row["etag"] == '"v1"'
     assert row["last_modified"] == "Wed, 18 Nov 2026 09:30:00 GMT"
     assert row["content_hash"] == hashlib.sha256(body).hexdigest()
-    # strptime raises if the format is wrong; the comparison catches local time passed as UTC.
     fetched_at = datetime.strptime(row["fetched_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
     assert abs(datetime.now(UTC) - fetched_at) < timedelta(minutes=1)
 
 
 def test_elapsed_ms_measures_the_request(monkeypatch, conn):
-    # A fake clock only for the `time` name inside fetch.py (httpx reads the real one):
-    # the first reading is the start (0 s), the second the end (0.25 s).
+    # fake clock for fetch.py only: httpx reads the real one
     readings = iter([0.0, 0.25])
     monkeypatch.setattr(fetch_module, "time", SimpleNamespace(perf_counter=lambda: next(readings)))
     run(replay(200), URL, log_db=conn)
@@ -231,7 +228,7 @@ def test_run_id_is_generated_or_taken_from_the_caller(conn):
             return fetcher.run_id
 
     generated = asyncio.run(main())
-    assert len(generated) == 32  # uuid4 hex
+    assert len(generated) == 32
     run(replay(200), URL, log_db=conn, run_id="my-run")
     assert [row["run_id"] for row in logged(conn)] == [generated, "my-run"]
 
@@ -248,7 +245,7 @@ def test_network_errors_are_logged_then_raised(sleeps, conn):
     with pytest.raises(httpx.ConnectTimeout):
         run(handler, URL, log_db=conn)
     rows = logged(conn)
-    assert len(rows) == MAX_ATTEMPTS  # one row per attempt
+    assert len(rows) == MAX_ATTEMPTS
     for row in rows:
         assert row["status"] is None
         assert row["error"] == "ConnectTimeout: timed out"
@@ -257,7 +254,7 @@ def test_network_errors_are_logged_then_raised(sleeps, conn):
 
 
 def test_decoding_errors_are_logged_then_raised(conn):
-    # A stream, not content=..., so httpx decodes the body inside the client, not here.
+    # a stream, so the body is decoded inside the client
     broken = httpx.Response(
         200, headers={"Content-Encoding": "gzip"}, stream=httpx.ByteStream(b"not gzip")
     )
@@ -272,7 +269,7 @@ def test_every_retry_is_logged_under_one_run_id(sleeps, conn):
     run(replay(503, 200), URL, log_db=conn)
     rows = logged(conn)
     assert [row["status"] for row in rows] == [503, 200]
-    assert rows[0]["run_id"] == rows[1]["run_id"]  # generated once per Fetcher
+    assert rows[0]["run_id"] == rows[1]["run_id"]
 
 
 def test_every_redirect_hop_is_logged(conn):
