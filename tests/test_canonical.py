@@ -24,6 +24,8 @@ def test_tracking_parameters_are_removed(url, expected):
         "https://www.polimi.it/news?page=2",
         "https://www.polimi.it/studenti?L=1",
         "https://www.polimi.it/news?id=4",
+        "https://www.polimi.it/cerca?q=tasse%20universitarie",
+        "https://www.polimi.it/x?path=/a/b",
     ],
 )
 def test_content_parameters_are_kept(url):
