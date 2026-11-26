@@ -15,6 +15,7 @@ its host's turn like any other request.
 import asyncio
 import random
 import sqlite3
+import time
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -165,27 +166,34 @@ class Fetcher:
 
     async def _send(self, url: str) -> httpx.Response:
         """The single place where a request leaves the crawler (hook for SCR-06 and SCR-07)."""
+        start = time.perf_counter()  # after the host's turn: only the request is timed
         try:
             response = await self._client.get(url, follow_redirects=False)
         except httpx.RequestError as exc:  # network errors, or a body that can't be decoded
-            self._log(url, error=f"{type(exc).__name__}: {exc}")
+            self._log(url, start, error=f"{type(exc).__name__}: {exc}")
             raise
-        self._log(url, response=response)
+        self._log(url, start, response=response)
         return response
 
     def _log(
-        self, url: str, *, response: httpx.Response | None = None, error: str | None = None
+        self,
+        url: str,
+        start: float,
+        *,
+        response: httpx.Response | None = None,
+        error: str | None = None,
     ) -> None:
-        """Add one fetch_log row, if the fetcher has a database."""
+        """Add one fetch_log row for a request started at `start`, if there is a database."""
         if self._log_db is None:
             return
+        elapsed_ms = round((time.perf_counter() - start) * 1000)
         status = size = None
         if response is not None:
             status = response.status_code
             size = len(response.content)
         self._log_db.execute(
-            "INSERT INTO fetch_log (run_id, url, status, error, bytes, fetched_at)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (self.run_id, url, status, error, size, _utc_now()),
+            "INSERT INTO fetch_log (run_id, url, status, error, elapsed_ms, bytes, fetched_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (self.run_id, url, status, error, elapsed_ms, size, _utc_now()),
         )
         self._log_db.commit()

@@ -211,3 +211,13 @@ def test_failed_requests_are_logged_then_raised(sleeps, conn):
         run(handler, URL, log_db=conn)
     rows = conn.execute("SELECT status, error FROM fetch_log").fetchall()
     assert [tuple(row) for row in rows] == [(None, "ConnectTimeout: timed out")] * MAX_ATTEMPTS
+
+
+def test_elapsed_time_is_logged(conn):
+    async def slow(request):
+        await asyncio.sleep(0.05)
+        return httpx.Response(200)
+
+    run(slow, URL, log_db=conn)
+    (elapsed_ms,) = conn.execute("SELECT elapsed_ms FROM fetch_log").fetchone()
+    assert 45 <= elapsed_ms < 1000  # small margin for timer resolution
