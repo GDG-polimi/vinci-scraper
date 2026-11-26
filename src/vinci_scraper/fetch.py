@@ -90,7 +90,7 @@ class _HostGate:
 class Fetcher:
     """Polite HTTP fetcher. It owns its client: `async with Fetcher(config) as f: ...`.
 
-    Given `log_db`, it logs each response to fetch_log under `run_id` (random if not given).
+    Given `log_db`, it logs every request to fetch_log under `run_id` (random if not given).
     """
 
     def __init__(
@@ -165,16 +165,27 @@ class Fetcher:
 
     async def _send(self, url: str) -> httpx.Response:
         """The single place where a request leaves the crawler (hook for SCR-06 and SCR-07)."""
-        response = await self._client.get(url, follow_redirects=False)
-        self._log(url, response)
+        try:
+            response = await self._client.get(url, follow_redirects=False)
+        except httpx.RequestError as exc:  # network errors, or a body that can't be decoded
+            self._log(url, error=f"{type(exc).__name__}: {exc}")
+            raise
+        self._log(url, response=response)
         return response
 
-    def _log(self, url: str, response: httpx.Response) -> None:
+    def _log(
+        self, url: str, *, response: httpx.Response | None = None, error: str | None = None
+    ) -> None:
         """Add one fetch_log row, if the fetcher has a database."""
         if self._log_db is None:
             return
+        status = size = None
+        if response is not None:
+            status = response.status_code
+            size = len(response.content)
         self._log_db.execute(
-            "INSERT INTO fetch_log (run_id, url, status, bytes, fetched_at) VALUES (?, ?, ?, ?, ?)",
-            (self.run_id, url, response.status_code, len(response.content), _utc_now()),
+            "INSERT INTO fetch_log (run_id, url, status, error, bytes, fetched_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (self.run_id, url, status, error, size, _utc_now()),
         )
         self._log_db.commit()

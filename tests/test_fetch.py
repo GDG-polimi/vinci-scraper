@@ -203,3 +203,11 @@ def test_retries_and_redirects_are_logged(sleeps, conn):
         (URL, 301),
         ("https://www.polimi.it/new", 200),
     ]
+
+
+def test_failed_requests_are_logged_then_raised(sleeps, conn):
+    handler = replay(*[httpx.ConnectTimeout("timed out")] * MAX_ATTEMPTS)
+    with pytest.raises(httpx.ConnectTimeout):
+        run(handler, URL, log_db=conn)
+    rows = conn.execute("SELECT status, error FROM fetch_log").fetchall()
+    assert [tuple(row) for row in rows] == [(None, "ConnectTimeout: timed out")] * MAX_ATTEMPTS
