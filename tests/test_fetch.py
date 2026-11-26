@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
@@ -221,3 +222,11 @@ def test_elapsed_time_is_logged(conn):
     run(slow, URL, log_db=conn)
     (elapsed_ms,) = conn.execute("SELECT elapsed_ms FROM fetch_log").fetchone()
     assert 45 <= elapsed_ms < 1000  # small margin for timer resolution
+
+
+def test_etag_last_modified_and_hash_are_logged(conn):
+    body = b"<html>studenti</html>"
+    headers = {"ETag": '"v1"', "Last-Modified": "Wed, 18 Nov 2026 09:30:00 GMT"}
+    run(replay(httpx.Response(200, content=body, headers=headers)), URL, log_db=conn)
+    row = conn.execute("SELECT etag, last_modified, content_hash FROM fetch_log").fetchone()
+    assert tuple(row) == ('"v1"', "Wed, 18 Nov 2026 09:30:00 GMT", hashlib.sha256(body).hexdigest())

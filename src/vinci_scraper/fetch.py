@@ -13,6 +13,7 @@ its host's turn like any other request.
 """
 
 import asyncio
+import hashlib
 import random
 import sqlite3
 import time
@@ -187,13 +188,27 @@ class Fetcher:
         if self._log_db is None:
             return
         elapsed_ms = round((time.perf_counter() - start) * 1000)
-        status = size = None
+        status = size = etag = last_modified = content_hash = None
         if response is not None:
             status = response.status_code
             size = len(response.content)
+            etag = response.headers.get("ETag")
+            last_modified = response.headers.get("Last-Modified")  # an HTTP date, kept as sent
+            content_hash = hashlib.sha256(response.content).hexdigest()  # body, not extracted text
         self._log_db.execute(
-            "INSERT INTO fetch_log (run_id, url, status, error, elapsed_ms, bytes, fetched_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (self.run_id, url, status, error, elapsed_ms, size, _utc_now()),
+            "INSERT INTO fetch_log (run_id, url, status, error, elapsed_ms, bytes, etag,"
+            " last_modified, content_hash, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                self.run_id,
+                url,
+                status,
+                error,
+                elapsed_ms,
+                size,
+                etag,
+                last_modified,
+                content_hash,
+                _utc_now(),
+            ),
         )
         self._log_db.commit()
