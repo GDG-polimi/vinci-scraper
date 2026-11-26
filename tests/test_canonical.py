@@ -1,6 +1,6 @@
 import pytest
 
-from vinci_scraper.canonical import canonical_url, dedup_key
+from vinci_scraper.canonical import canonical_from_html, canonical_url, dedup_key
 
 
 @pytest.mark.parametrize(
@@ -69,3 +69,23 @@ def test_different_pages_keep_different_keys():
     assert dedup_key("https://www.polimi.it/news?page=1") != dedup_key(
         "https://www.polimi.it/news?page=2"
     )
+
+
+@pytest.mark.parametrize(
+    ("html", "expected"),
+    [
+        (
+            '<link rel="canonical" href="https://www.polimi.it/news?id=4">',
+            "https://www.polimi.it/news?id=4",
+        ),
+        (
+            '<link rel="canonical" href="/news?id=4&amp;cHash=ab12&amp;utm_source=ig#top">',
+            "https://www.polimi.it/news?id=4&cHash=ab12",
+        ),
+        ('<LINK REL="Canonical" HREF="/news?id=4" />', "https://www.polimi.it/news?id=4"),
+        ('<link rel="alternate" hreflang="en" href="/en/news?id=4">', None),
+        ("<p>no canonical here</p>", None),
+    ],
+)
+def test_canonical_from_html(html, expected):
+    assert canonical_from_html(html, "https://www.polimi.it/news/dettaglio?id=4") == expected
