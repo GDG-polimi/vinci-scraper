@@ -7,6 +7,7 @@ from itertools import pairwise
 import httpx
 import pytest
 
+from vinci_scraper import db
 from vinci_scraper.client import make_client
 from vinci_scraper.config import Config
 from vinci_scraper.fetch import BACKOFF, MAX_ATTEMPTS, MAX_REDIRECTS, DisallowedURLError, Fetcher
@@ -60,6 +61,15 @@ def sleeps(monkeypatch):
 
     monkeypatch.setattr(asyncio, "sleep", fake_sleep)
     return waits
+
+
+@pytest.fixture
+def conn():
+    """In-memory database with the schema applied."""
+    conn = db.connect(":memory:")
+    db.migrate(conn)
+    yield conn
+    conn.close()
 
 
 def test_5xx_is_retried_after_backoff(sleeps):
@@ -174,3 +184,22 @@ def test_redirect_loop_stops():
     with pytest.raises(httpx.TooManyRedirects):
         run(handler, URL)
     assert len(handler.requests) == MAX_REDIRECTS + 1
+
+
+def test_responses_are_logged(conn):
+    run(replay(httpx.Response(200, content=b"ciao")), URL, log_db=conn, run_id="r1")
+    row = conn.execute("SELECT * FROM fetch_log").fetchone()
+    assert (row["run_id"], row["url"], row["status"], row["bytes"]) == ("r1", URL, 200, 4)
+    fetched_at = datetime.strptime(row["fetched_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    assert abs(datetime.now(UTC) - fetched_at) < timedelta(minutes=1)
+
+
+def test_retries_and_redirects_are_logged(sleeps, conn):
+    moved = httpx.Response(301, headers={"Location": "/new"})
+    run(replay(503, moved, 200), URL, log_db=conn)
+    rows = conn.execute("SELECT url, status FROM fetch_log ORDER BY id").fetchall()
+    assert [(row["url"], row["status"]) for row in rows] == [
+        (URL, 503),
+        (URL, 301),
+        ("https://www.polimi.it/new", 200),
+    ]

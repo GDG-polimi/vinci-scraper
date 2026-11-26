@@ -14,6 +14,8 @@ its host's turn like any other request.
 
 import asyncio
 import random
+import sqlite3
+import uuid
 from collections import defaultdict
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -55,6 +57,11 @@ def _retry_after(response: httpx.Response) -> float | None:
     return max(0.0, (when - datetime.now(UTC)).total_seconds())
 
 
+def _utc_now() -> str:
+    """The current time as stored in the database, e.g. '2026-11-18T09:30:00Z'."""
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 class _HostGate:
     """Politeness state of one host: in-flight slots and the earliest next start.
 
@@ -81,7 +88,10 @@ class _HostGate:
 
 
 class Fetcher:
-    """Polite HTTP fetcher. It owns its client: `async with Fetcher(config) as f: ...`."""
+    """Polite HTTP fetcher. It owns its client: `async with Fetcher(config) as f: ...`.
+
+    Given `log_db`, it logs each response to fetch_log under `run_id` (random if not given).
+    """
 
     def __init__(
         self,
@@ -91,6 +101,8 @@ class Fetcher:
         concurrency: int = CONCURRENCY_PER_HOST,
         interval: float = INTERVAL,
         backoff: float = BACKOFF,
+        log_db: sqlite3.Connection | None = None,
+        run_id: str | None = None,
     ):
         self.config = config
         # One client for the whole run: connections are reused, and the per-host
@@ -100,6 +112,8 @@ class Fetcher:
         self._gates: defaultdict[str, _HostGate] = defaultdict(
             lambda: _HostGate(concurrency, interval)
         )
+        self._log_db = log_db
+        self.run_id = run_id or uuid.uuid4().hex
 
     async def __aenter__(self) -> Self:
         return self
@@ -151,4 +165,16 @@ class Fetcher:
 
     async def _send(self, url: str) -> httpx.Response:
         """The single place where a request leaves the crawler (hook for SCR-06 and SCR-07)."""
-        return await self._client.get(url, follow_redirects=False)
+        response = await self._client.get(url, follow_redirects=False)
+        self._log(url, response)
+        return response
+
+    def _log(self, url: str, response: httpx.Response) -> None:
+        """Add one fetch_log row, if the fetcher has a database."""
+        if self._log_db is None:
+            return
+        self._log_db.execute(
+            "INSERT INTO fetch_log (run_id, url, status, bytes, fetched_at) VALUES (?, ?, ?, ?, ?)",
+            (self.run_id, url, response.status_code, len(response.content), _utc_now()),
+        )
+        self._log_db.commit()
