@@ -1,6 +1,6 @@
 import pytest
 
-from vinci_scraper.canonical import dedup_key, fetch_url
+from vinci_scraper.canonical import canonical_url, dedup_key
 
 
 @pytest.mark.parametrize(
@@ -15,7 +15,7 @@ from vinci_scraper.canonical import dedup_key, fetch_url
     ],
 )
 def test_tracking_parameters_are_removed(url, expected):
-    assert fetch_url(url) == expected
+    assert canonical_url(url) == expected
 
 
 @pytest.mark.parametrize(
@@ -29,24 +29,29 @@ def test_tracking_parameters_are_removed(url, expected):
     ],
 )
 def test_content_parameters_are_kept(url):
-    assert fetch_url(url) == url
+    assert canonical_url(url) == url
 
 
 def test_host_is_lowercased_but_not_the_path():
-    assert fetch_url("HTTPS://WWW.Polimi.it/Studenti") == "https://www.polimi.it/Studenti"
+    assert canonical_url("HTTPS://WWW.Polimi.it/Studenti") == "https://www.polimi.it/Studenti"
 
 
 def test_fragment_is_removed():
-    assert fetch_url("https://www.polimi.it/studenti#tasse") == "https://www.polimi.it/studenti"
+    assert canonical_url("https://www.polimi.it/studenti#tasse") == "https://www.polimi.it/studenti"
 
 
 def test_blank_parameters_are_kept():
-    assert fetch_url("https://www.polimi.it/cerca?q=") == "https://www.polimi.it/cerca?q="
+    assert canonical_url("https://www.polimi.it/cerca?q=") == "https://www.polimi.it/cerca?q="
+
+
+def test_empty_pairs_are_dropped():
+    url = "https://www.polimi.it/news?id=4&utm_source=ig&"
+    assert dedup_key(url) == "https://www.polimi.it/news?id=4"
 
 
 def test_chash_is_kept_for_fetching_but_not_for_dedup():
     url = "https://www.polimi.it/news?id=4&cHash=ab12"
-    assert fetch_url(url) == url
+    assert canonical_url(url) == url
     assert dedup_key(url) == "https://www.polimi.it/news?id=4"
 
 

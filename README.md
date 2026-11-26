@@ -97,7 +97,7 @@ src/vinci_scraper/   the package; `vinci` CLI entry point in cli.py
   config.py          loads + validates hosts.yaml; Config.is_allowed(url)
   client.py          make_client(): httpx client with the identifying User-Agent
   fetch.py           Fetcher: per-host limits, retries, redirects checked against the allowlist
-  canonical.py       fetch_url() / dedup_key(): strip tracking params and #fragment; dedup drops cHash
+  canonical.py       canonical_url() / dedup_key(): strip tracking params and #fragment; dedup drops cHash
   db/                SQLite connection + numbered SQL migrations
 tests/               pytest tests (no network access)
 .github/workflows/   CI (lint + tests on every PR) and project-board automation
