@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
@@ -7,6 +8,7 @@ from itertools import pairwise
 import httpx
 import pytest
 
+from vinci_scraper import db
 from vinci_scraper.client import make_client
 from vinci_scraper.config import Config
 from vinci_scraper.fetch import BACKOFF, MAX_ATTEMPTS, MAX_REDIRECTS, DisallowedURLError, Fetcher
@@ -60,6 +62,15 @@ def sleeps(monkeypatch):
 
     monkeypatch.setattr(asyncio, "sleep", fake_sleep)
     return waits
+
+
+@pytest.fixture
+def conn():
+    """In-memory database with the schema applied."""
+    conn = db.connect(":memory:")
+    db.migrate(conn)
+    yield conn
+    conn.close()
 
 
 def test_5xx_is_retried_after_backoff(sleeps):
@@ -174,3 +185,48 @@ def test_redirect_loop_stops():
     with pytest.raises(httpx.TooManyRedirects):
         run(handler, URL)
     assert len(handler.requests) == MAX_REDIRECTS + 1
+
+
+def test_responses_are_logged(conn):
+    run(replay(httpx.Response(200, content=b"ciao")), URL, log_db=conn, run_id="r1")
+    row = conn.execute("SELECT * FROM fetch_log").fetchone()
+    assert (row["run_id"], row["url"], row["status"], row["bytes"]) == ("r1", URL, 200, 4)
+    fetched_at = datetime.strptime(row["fetched_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    assert abs(datetime.now(UTC) - fetched_at) < timedelta(minutes=1)
+
+
+def test_retries_and_redirects_are_logged(sleeps, conn):
+    moved = httpx.Response(301, headers={"Location": "/new"})
+    run(replay(503, moved, 200), URL, log_db=conn)
+    rows = conn.execute("SELECT url, status FROM fetch_log ORDER BY id").fetchall()
+    assert [(row["url"], row["status"]) for row in rows] == [
+        (URL, 503),
+        (URL, 301),
+        ("https://www.polimi.it/new", 200),
+    ]
+
+
+def test_failed_requests_are_logged_then_raised(sleeps, conn):
+    handler = replay(*[httpx.ConnectTimeout("timed out")] * MAX_ATTEMPTS)
+    with pytest.raises(httpx.ConnectTimeout):
+        run(handler, URL, log_db=conn)
+    rows = conn.execute("SELECT status, error FROM fetch_log").fetchall()
+    assert [tuple(row) for row in rows] == [(None, "ConnectTimeout: timed out")] * MAX_ATTEMPTS
+
+
+def test_elapsed_time_is_logged(conn):
+    async def slow(request):
+        await asyncio.sleep(0.05)
+        return httpx.Response(200)
+
+    run(slow, URL, log_db=conn)
+    (elapsed_ms,) = conn.execute("SELECT elapsed_ms FROM fetch_log").fetchone()
+    assert 45 <= elapsed_ms < 1000  # small margin for timer resolution
+
+
+def test_etag_last_modified_and_hash_are_logged(conn):
+    body = b"<html>studenti</html>"
+    headers = {"ETag": '"v1"', "Last-Modified": "Wed, 18 Nov 2026 09:30:00 GMT"}
+    run(replay(httpx.Response(200, content=body, headers=headers)), URL, log_db=conn)
+    row = conn.execute("SELECT etag, last_modified, content_hash FROM fetch_log").fetchone()
+    assert tuple(row) == ('"v1"', "Wed, 18 Nov 2026 09:30:00 GMT", hashlib.sha256(body).hexdigest())
